@@ -1,0 +1,14 @@
+enum Rank:
+  case Ace
+  case King
+  case Queen
+  case Jack
+  case Ten
+  case Nine
+  case Eight
+  case Seven
+  case Six
+  case Five
+  case Four
+  case Three
+  case Two
