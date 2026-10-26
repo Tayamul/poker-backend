@@ -14,6 +14,11 @@ enum PokerAction:
   case Bet(amount: Int)
   case Raise(amount: Int)
 
+case class PokerPlayerConfig(
+                              id: String,
+                              name: String,
+                              startingChips: Int
+                            )
 
 case class PokerPlayer(
                         id: String,
@@ -52,7 +57,9 @@ case class PokerGame(
                       winningHand: Option[String] = None,
                       lastAction: Option[String] = None,
                       actedPlayerIds: Set[String] = Set.empty,
-                      actionHistory: List[PokerActionRecord] = Nil
+                      raiseAllowedPlayerIds: Set[String] = Set.empty,
+                      actionHistory: List[PokerActionRecord] = Nil,
+                      lastActedBetByPlayer: Map[String, Int] = Map.empty
                     )
 
 
@@ -63,61 +70,145 @@ object PokerGame:
              smallBlind: Int = 5,
              bigBlind: Int = 10
            ): PokerGame =
+    start(
+      playerConfigs = List(
+        PokerPlayerConfig("player1", "You", startingChips),
+        PokerPlayerConfig("player2", "Opponent", startingChips)
+      ),
+      smallBlind = smallBlind,
+      bigBlind = bigBlind,
+      dealerPlayerId = "player1"
+    )
+
+  def start(
+             playerConfigs: List[PokerPlayerConfig],
+             smallBlind: Int,
+             bigBlind: Int,
+             dealerPlayerId: String
+           ): PokerGame =
+    require(playerConfigs.size >= 2, "At least two players are required")
+    require(
+      playerConfigs.forall(_.id.trim.nonEmpty),
+      "Player IDs cannot be empty"
+    )
+    require(
+      playerConfigs.map(_.id).distinct.size == playerConfigs.size,
+      "Player IDs must be unique"
+    )
+    require(
+      playerConfigs.forall(_.startingChips > 0),
+      "Starting chips must be positive"
+    )
+    require(
+      smallBlind > 0,
+      "Small blind must be positive"
+    )
+    require(
+      bigBlind >= smallBlind,
+      "Big blind must be at least the small blind"
+    )
+    require(
+      playerConfigs.exists(_.id == dealerPlayerId),
+      "Dealer must be one of the players"
+    )
 
     val shuffledDeck = new Deck().shuffle()
+    val playerCount = playerConfigs.size
 
-    val player1Cards = List(
-      shuffledDeck(0),
-      shuffledDeck(2)
+    require(
+      playerCount * 2 + 5 <= shuffledDeck.size,
+      "Not enough cards to start the hand"
     )
 
-    val player2Cards = List(
-      shuffledDeck(1),
-      shuffledDeck(3)
+    // Deal one card to each player, then a second card to each.
+    val dealtPlayers = playerConfigs.zipWithIndex.map {
+      case (config, index) =>
+        val blind1 = shuffledDeck(index)
+        val blind2 = shuffledDeck(index + playerCount)
+
+        PokerPlayer(
+          id = config.id,
+          name = config.name,
+          chips = config.startingChips,
+          holeCards = List(blind1, blind2),
+          currentBet = 0,
+          folded = false,
+          allIn = false,
+          totalContribution = 0
+        )
+    }
+
+    val remainingDeck = shuffledDeck.drop(playerCount * 2)
+    val dealerIndex = playerConfigs.indexWhere(_.id == dealerPlayerId)
+
+    def seatAfter(index: Int): Int =
+      (index + 1) % playerCount
+
+    // Heads-up: the dealer posts the small blind.
+    // 3+ players: the small blind is immediately left of the dealer.
+    val smallBlindIndex =
+      if playerCount == 2 then dealerIndex
+      else seatAfter(dealerIndex)
+
+    val bigBlindIndex = seatAfter(smallBlindIndex)
+
+    def postBlind(
+                   player: PokerPlayer,
+                   blindAmount: Int
+                 ): PokerPlayer =
+      val posted = math.min(player.chips, blindAmount)
+
+      player.copy(
+        chips = player.chips - posted,
+        currentBet = posted,
+        allIn = player.chips == posted,
+        totalContribution = posted
+      )
+
+    val withSmallBlind = dealtPlayers.updated(
+      smallBlindIndex,
+      postBlind(dealtPlayers(smallBlindIndex), smallBlind)
     )
 
-    val remainingDeck = shuffledDeck.drop(4)
-
-    val player1 = PokerPlayer(
-      id = "player1",
-      name = "You",
-      chips = startingChips - smallBlind,
-      holeCards = player1Cards,
-      currentBet = smallBlind,
-      folded = false,
-      allIn = false
+    val withBlinds = withSmallBlind.updated(
+      bigBlindIndex,
+      postBlind(withSmallBlind(bigBlindIndex), bigBlind)
     )
 
-    val player2 = PokerPlayer(
-      id = "player2",
-      name = "Opponent",
-      chips = startingChips - bigBlind,
-      holeCards = player2Cards,
-      currentBet = bigBlind,
-      folded = false,
-      allIn = false
-    )
+    val firstToAct =
+      (1 to playerCount)
+        .iterator
+        .map(offset => withBlinds((bigBlindIndex + offset) % playerCount))
+        .find(p => !p.folded && !p.allIn)
+        .map(_.id)
+        .getOrElse("")
 
-    println("\n--------------- Player 1 ---------------")
-    println(player1)
-    println("\n--------------- Player 2 ---------------")
-    println(player2)
-//    println("\n--------------- Player 2's hole cards ---------------")
-//    println(player2.holeCards)
-//    println("\n------------------------------ \n")
-
-    PokerGame(
-      players = List(player1, player2),
+    val initialGame = PokerGame(
+      players = withBlinds,
       deck = remainingDeck,
       communityCards = Nil,
-      pot = smallBlind + bigBlind,
-      dealerPlayerId = "player1",
+      pot =
+        withBlinds(smallBlindIndex).currentBet +
+          withBlinds(bigBlindIndex).currentBet,
+      dealerPlayerId = dealerPlayerId,
       smallBlind = smallBlind,
       bigBlind = bigBlind,
       phase = PokerPhase.PreFlop,
-      currentPlayerId = "player1",
-      minimumRaise = bigBlind
+      currentPlayerId = firstToAct,
+      minimumRaise = bigBlind,
+      raiseAllowedPlayerIds =
+        withBlinds
+          .filterNot(p => p.folded || p.allIn)
+          .map(_.id)
+          .toSet
     )
+
+    // If blind posting leaves every live player all-in, there is no betting
+    // action to wait for. Deal the board and settle the hand immediately.
+    if withBlinds.filterNot(_.folded).forall(_.allIn) then
+      runoutToShowdown(initialGame).getOrElse(initialGame)
+    else
+      initialGame
 
 
   def applyAction(
@@ -125,15 +216,7 @@ object PokerGame:
                    action: PokerAction
                  ): Either[String, PokerGame] =
 
-//    println("\n--------------- Game = ")
-
-//    println("\n--------------- applyAction game.actionHistory ---------------")
-//    println(game.actionHistory)
-//    println("\n------------------------------ \n")
-
     val potBefore = game.pot
-    println("\n Pot before = " + potBefore)
-    println("\n Game = " + game)
 
     if game.phase == PokerPhase.Showdown ||
       game.phase == PokerPhase.Complete then
@@ -164,7 +247,12 @@ object PokerGame:
       case PokerAction.Fold =>
         fold(
           recordAction(
-            game,
+            game.copy(
+              raiseAllowedPlayerIds =
+                game.raiseAllowedPlayerIds - currentPlayer.id,
+              lastActedBetByPlayer =
+                game.lastActedBetByPlayer.updated(currentPlayer.id, highestBet)
+            ),
             currentPlayer,
             action,
             potBefore
@@ -180,7 +268,11 @@ object PokerGame:
             recordAction(
               game.copy(
                 lastAction =
-                  Some(s"${currentPlayer.name} checked")
+                  Some(s"${currentPlayer.name} checked"),
+                raiseAllowedPlayerIds =
+                  game.raiseAllowedPlayerIds - currentPlayer.id,
+                lastActedBetByPlayer =
+                  game.lastActedBetByPlayer.updated(currentPlayer.id, highestBet)
               ),
               currentPlayer,
               action,
@@ -203,47 +295,18 @@ object PokerGame:
             currentPlayer.copy(
               chips = currentPlayer.chips - actualAmount,
               currentBet = currentPlayer.currentBet + actualAmount,
-              allIn = currentPlayer.chips - actualAmount == 0
+              allIn = currentPlayer.chips - actualAmount == 0,
+              totalContribution = currentPlayer.totalContribution + actualAmount
             )
 
-          var updatedPlayers =
+          val updatedPlayers =
             game.players.map { p =>
               if p.id == currentPlayer.id then updatedPlayer
               else p
             }
 
-          var updatedPot =
+          val updatedPot =
             game.pot + actualAmount
-
-          /*
-           * Heads-up special case:
-           *
-           * If the player cannot fully call because they
-           * are all-in, any unmatched portion of the
-           * opponent's bet is returned.
-           */
-          if actualAmount < amountToCall then
-
-            val opponent =
-              updatedPlayers.find(_.id != currentPlayer.id).get
-
-            val unmatchedAmount =
-              amountToCall - actualAmount
-
-            val refundedOpponent =
-              opponent.copy(
-                chips = opponent.chips + unmatchedAmount,
-                currentBet = opponent.currentBet - unmatchedAmount
-              )
-
-            updatedPlayers =
-              updatedPlayers.map { p =>
-                if p.id == opponent.id then refundedOpponent
-                else p
-              }
-
-            updatedPot =
-              updatedPot - unmatchedAmount
 
           val updatedGame =
             recordAction(
@@ -251,7 +314,11 @@ object PokerGame:
                 players = updatedPlayers,
                 pot = updatedPot,
                 lastAction =
-                  Some(s"${currentPlayer.name} called $actualAmount")
+                  Some(s"${currentPlayer.name} called $actualAmount"),
+                raiseAllowedPlayerIds =
+                  game.raiseAllowedPlayerIds - currentPlayer.id,
+                lastActedBetByPlayer =
+                  game.lastActedBetByPlayer.updated(currentPlayer.id, highestBet)
               ),
               currentPlayer,
               action,
@@ -261,9 +328,11 @@ object PokerGame:
           finishAction(updatedGame)
 
       case PokerAction.Bet(amount) =>
-        if highestBet != 0 then
+        if amount <= 0 then
+          Left("Bet amount must be positive")
+        else if highestBet != 0 then
           Left("A bet has already been made. You must call or raise.")
-        else if amount < game.bigBlind then
+        else if amount < game.bigBlind && amount != currentPlayer.chips then
           Left(s"The minimum bet is ${game.bigBlind}")
         else if amount > currentPlayer.chips then
           Left("You do not have enough chips for that bet")
@@ -272,7 +341,8 @@ object PokerGame:
             currentPlayer.copy(
               chips = currentPlayer.chips - amount,
               currentBet = amount,
-              allIn = currentPlayer.chips - amount == 0
+              allIn = currentPlayer.chips - amount == 0,
+              totalContribution = currentPlayer.totalContribution + amount
             )
 
           val updatedGame =
@@ -284,10 +354,19 @@ object PokerGame:
                     else p
                   },
                 pot = game.pot + amount,
-                minimumRaise = amount,
+                minimumRaise =
+                  if amount >= game.bigBlind then amount
+                  else game.bigBlind,
                 actedPlayerIds = Set(currentPlayer.id),
+                lastActedBetByPlayer =
+                  game.lastActedBetByPlayer.updated(currentPlayer.id, amount),
                 lastAction =
-                  Some(s"${currentPlayer.name} bet $amount")
+                  Some(s"${currentPlayer.name} bet $amount"),
+                raiseAllowedPlayerIds =
+                  game.players
+                    .filter(p => p.id != currentPlayer.id && !p.folded && !p.allIn)
+                    .map(_.id)
+                    .toSet
               ),
               currentPlayer,
               action,
@@ -297,58 +376,112 @@ object PokerGame:
           finishAction(updatedGame)
 
       case PokerAction.Raise(amount) =>
+        val chipsRequired =
+          amount - currentPlayer.currentBet
+
+        val minimumTotal =
+          highestBet + game.minimumRaise
+
+        val isAllIn =
+          chipsRequired == currentPlayer.chips
+
+        val isFullRaise =
+          amount >= minimumTotal
+
+        val isShortAllInRaise =
+          isAllIn &&
+            amount > highestBet &&
+            !isFullRaise
+
         if highestBet <= currentPlayer.currentBet then
           Left("There is no bet to raise")
+        else if amount <= highestBet then
+          Left("A raise must exceed the current highest bet")
+        else if chipsRequired <= 0 then
+          Left("Raise amount must exceed your current bet")
+        else if chipsRequired > currentPlayer.chips then
+          Left("You do not have enough chips for that raise")
+        else if !isFullRaise && !isShortAllInRaise then
+          Left(s"Minimum raise is to $minimumTotal")
+        else if !game.raiseAllowedPlayerIds.contains(currentPlayer.id) then
+          Left("You cannot raise because raising rights have not been reopened")
         else
-          val minimumTotal =
-            highestBet + game.minimumRaise
+          val eligibleOtherPlayers =
+            game.players
+              .filter(p =>
+                p.id != currentPlayer.id &&
+                  !p.folded &&
+                  !p.allIn
+              )
+              .map(_.id)
+              .toSet
 
-          if amount < minimumTotal then
-            Left(
-              s"Minimum raise is to $minimumTotal"
-            )
-          else if amount <= currentPlayer.currentBet then
-            Left("Raise amount must be greater than your current bet")
-          else
-            val chipsRequired =
-              amount - currentPlayer.currentBet
-
-            if chipsRequired > currentPlayer.chips then
-              Left("You do not have enough chips for that raise")
+          // A short all-in does not itself reopen betting. However, multiple
+          // short all-ins can cumulatively reach a full raise since a player
+          // last acted; in that case, that player's raising rights reopen.
+          val cumulativelyReopenedPlayers =
+            if isFullRaise then eligibleOtherPlayers
             else
-              val raiseSize =
-                amount - highestBet
+              game.actedPlayerIds
+                .filter(_ != currentPlayer.id)
+                .filter { playerId =>
+                  val lastFacedBet =
+                    game.lastActedBetByPlayer.getOrElse(
+                      playerId,
+                      game.players.find(_.id == playerId).map(_.currentBet).getOrElse(0)
+                    )
+                  amount - lastFacedBet >= game.minimumRaise
+                }
+                .filter { playerId => eligibleOtherPlayers.contains(playerId) }
 
-              val updatedPlayer =
-                currentPlayer.copy(
-                  chips = currentPlayer.chips - chipsRequired,
-                  currentBet = amount,
-                  allIn =
-                    currentPlayer.chips - chipsRequired == 0
-                )
+          val updatedRaiseAllowedPlayerIds =
+            if isFullRaise then eligibleOtherPlayers
+            else
+              (game.raiseAllowedPlayerIds - currentPlayer.id) ++ cumulativelyReopenedPlayers
 
-              val updatedGame =
-                recordAction(
-                  game.copy(
-                    players =
-                      game.players.map { p =>
-                        if p.id == currentPlayer.id then updatedPlayer
-                        else p
-                      },
-                    pot = game.pot + chipsRequired,
-                    minimumRaise = raiseSize,
-                    actedPlayerIds = Set(currentPlayer.id),
-                    lastAction =
-                      Some(
-                        s"${currentPlayer.name} raised to $amount"
-                      )
-                  ),
-                  currentPlayer,
-                  action,
-                  potBefore
-                )
+          val raiseSize =
+            amount - highestBet
 
-              finishAction(updatedGame)
+          val updatedPlayer =
+            currentPlayer.copy(
+              chips = currentPlayer.chips - chipsRequired,
+              currentBet = amount,
+              allIn = currentPlayer.chips == chipsRequired,
+              totalContribution =
+                currentPlayer.totalContribution + chipsRequired
+            )
+
+          val updatedActedPlayerIds =
+            if isFullRaise then
+              Set(currentPlayer.id)
+            else
+              game.actedPlayerIds
+
+          val updatedGame =
+            recordAction(
+              game.copy(
+                players = game.players.map { p =>
+                  if p.id == currentPlayer.id then updatedPlayer
+                  else p
+                },
+                pot = game.pot + chipsRequired,
+                minimumRaise =
+                  if isFullRaise then raiseSize
+                  else game.minimumRaise,
+                actedPlayerIds = updatedActedPlayerIds,
+                lastActedBetByPlayer =
+                  game.lastActedBetByPlayer.updated(currentPlayer.id, amount),
+                lastAction =
+                  Some(s"${currentPlayer.name} raised to $amount"),
+                raiseAllowedPlayerIds = updatedRaiseAllowedPlayerIds
+              ),
+              currentPlayer,
+              action,
+              potBefore
+            )
+
+          finishAction(updatedGame)
+
 
 
   private def fold(
@@ -358,133 +491,102 @@ object PokerGame:
 
     val foldedPlayers =
       game.players.map { p =>
-        if p.id == player.id then
-          p.copy(folded = true)
-        else
-          p
+        if p.id == player.id then p.copy(folded = true)
+        else p
       }
 
-    val winner =
-      foldedPlayers.find(!_.folded)
+    val updatedGame =
+      game.copy(
+        players = foldedPlayers,
+        lastAction = Some(s"${player.name} folded")
+      )
 
-    winner match
-      case None =>
-        Left("No player remains")
+    val remainingPlayers =
+      foldedPlayers.filterNot(_.folded)
 
-      case Some(winnerPlayer) =>
+    if remainingPlayers.isEmpty then
+      Left("No player remains")
+    else
+      finishAction(updatedGame)
 
-        val paidWinner =
-          winnerPlayer.copy(
-            chips = winnerPlayer.chips + game.pot
-          )
-
-        val finalPlayers =
-          foldedPlayers.map { p =>
-            if p.id == winnerPlayer.id then paidWinner
-            else p
-          }
-
-        Right(
-          game.copy(
-            players = finalPlayers,
-            pot = 0,
-            phase = PokerPhase.Complete,
-            currentPlayerId = "",
-            winnerPlayerId = Some(winnerPlayer.id),
-            winnerPlayerIds = List(winnerPlayer.id),
-            winningHand = None,
-            lastAction =
-              Some(s"${player.name} folded")
-          )
-        )
 
   private def resolveShowdown(
                                game: PokerGame
                              ): Either[String, PokerGame] =
 
     val activePlayers =
-      game.players.filter(!_.folded)
+      game.players.filterNot(_.folded)
 
     if activePlayers.isEmpty then
       Left("No active players remain")
-
     else if activePlayers.size == 1 then
-      Left("Showdown requires at least two players")
-
+      Left("Showdown requires at least two active players")
+    else if game.communityCards.length != 5 then
+      Left("Showdown requires five community cards")
     else
-
-      val playerValues =
-        activePlayers.map { player =>
-
-          val value =
-            PokerHandEvaluator.bestOfSeven(
-              player.holeCards,
-              game.communityCards
-            )
-
-          player.id -> value
-        }
-
-      val bestValue =
-        playerValues
-          .map(_._2)
-          .max
-
-      val winners =
-        playerValues
-          .filter { case (_, value) =>
-            value == bestValue
-          }
-          .map(_._1)
-
-      val share =
-        game.pot / winners.size
-
-      val remainder =
-        game.pot % winners.size
-
-      val updatedPlayers =
+      val contributions =
         game.players.map { player =>
-
-          if winners.contains(player.id) then
-
-            val payout =
-              share +
-                (if player.id == winners.head
-                then remainder
-                else 0)
-
-            player.copy(
-              chips = player.chips + payout
-            )
-
-          else
-            player
+          PotManager.Contribution(
+            playerId = player.id,
+            totalContribution = player.totalContribution,
+            folded = player.folded
+          )
         }
 
-      Right(
+      val handRanks =
+        activePlayers.map { player =>
+          player.id -> PokerHandEvaluator.bestOfSeven(
+            player.holeCards,
+            game.communityCards
+          )
+        }.toMap
+
+      // Deterministic tie-breaking for odd chips.
+      // Replace with seat order left of the dealer when that is available.
+      val oddChipOrder =
+        game.players.map(_.id)
+
+      PotManager.settle(
+        players = contributions,
+        handRanks = handRanks,
+        oddChipOrder = oddChipOrder,
+        ordering = Ordering[HandValue]
+      ).map { settlement =>
+        val updatedPlayers =
+          game.players.map { player =>
+            player.copy(
+              chips = player.chips +
+                settlement.payouts.getOrElse(player.id, 0)
+            )
+          }
+
+        val bestOverallHand =
+          handRanks.values.max
+
+        val playersReceivingPayout =
+          settlement.payouts.collect {
+            case (playerId, amount) if amount > 0 => playerId
+          }.toList
+
         game.copy(
           players = updatedPlayers,
           pot = 0,
           phase = PokerPhase.Complete,
           currentPlayerId = "",
           winnerPlayerId =
-            if winners.size == 1
-            then Some(winners.head)
-            else None,
-          winnerPlayerIds = winners,
-          winningHand =
-            Some(bestValue.categoryName),
-          lastAction =
-            Some(
-              if winners.size == 1 then
-                s"${bestValue.categoryName} wins"
-              else
-                s"${bestValue.categoryName} - split pot"
-            )
+            if playersReceivingPayout.size == 1 then
+              playersReceivingPayout.headOption
+            else
+              None,
+          winnerPlayerIds = playersReceivingPayout,
+          winningHand = Some(bestOverallHand.categoryName),
+          lastAction = Some(
+            s"Showdown complete: ${settlement.pots.size} pot(s) settled"
+          )
         )
-      )
-      
+      }
+
+
   private def runoutToShowdown(
                                 game: PokerGame
                               ): Either[String, PokerGame] =
@@ -511,25 +613,44 @@ object PokerGame:
         )
       )
 
+
   private def finishAction(
                             game: PokerGame
                           ): Either[String, PokerGame] =
 
     val activePlayers =
-      game.players.filter(!_.folded)
+      game.players.filterNot(_.folded)
 
-    if activePlayers.size == 1 then
-      fold(game, game.players.find(_.folded).get)
+    if activePlayers.isEmpty then
+      Left("No active players remain")
 
-    else if activePlayers.forall(_.allIn) then
-      runoutToShowdown(game)
+    else if activePlayers.size == 1 then
+      val winner = activePlayers.head
+      val paidWinner =
+        winner.copy(chips = winner.chips + game.pot)
+
+      Right(
+        game.copy(
+          players = game.players.map { p =>
+            if p.id == winner.id then paidWinner else p
+          },
+          pot = 0,
+          phase = PokerPhase.Complete,
+          currentPlayerId = "",
+          winnerPlayerId = Some(winner.id),
+          winnerPlayerIds = List(winner.id),
+          winningHand = None,
+          lastAction = Some(s"${winner.name} wins uncontested")
+        )
+      )
 
     else
       val highestBet =
         activePlayers.map(_.currentBet).max
 
       val updatedActedPlayerIds =
-        game.actedPlayerIds + game.currentPlayerId
+        if game.currentPlayerId.isEmpty then game.actedPlayerIds
+        else game.actedPlayerIds + game.currentPlayerId
 
       val bettingRoundComplete =
         activePlayers.forall { player =>
@@ -540,23 +661,31 @@ object PokerGame:
               )
         }
 
-      if bettingRoundComplete then
-        advanceStreet(
-          game.copy(
-            actedPlayerIds = updatedActedPlayerIds
+      if !bettingRoundComplete then
+        val nextPlayer =
+          nextPlayerId(game, game.currentPlayerId)
+
+        if nextPlayer.isEmpty then
+          Left("No eligible player can act, but betting is incomplete")
+        else
+          Right(
+            game.copy(
+              actedPlayerIds = updatedActedPlayerIds,
+              currentPlayerId = nextPlayer
+            )
           )
-        )
+
       else
-        Right(
-          game.copy(
-            actedPlayerIds = updatedActedPlayerIds,
-            currentPlayerId =
-              nextPlayerId(
-                game,
-                game.currentPlayerId
-              )
-          )
-        )
+        val playersWhoCanAct =
+          activePlayers.filterNot(_.allIn)
+
+        val updatedGame =
+          game.copy(actedPlayerIds = updatedActedPlayerIds)
+
+        if playersWhoCanAct.size <= 1 then
+          runoutToShowdown(updatedGame)
+        else
+          advanceStreet(updatedGame)
 
 
   private def nextPlayerId(
@@ -564,16 +693,35 @@ object PokerGame:
                             currentPlayerId: String
                           ): String =
 
-    game.players
-      .filter(player =>
-        !player.folded &&
-          !player.allIn &&
-          player.id != currentPlayerId
-      )
-      .headOption
-      .map(_.id)
-      .getOrElse("")
+    val playerCount = game.players.length
+    val currentIndex =
+      game.players.indexWhere(_.id == currentPlayerId)
 
+    if playerCount == 0 || currentIndex < 0 then
+      ""
+    else
+      (1 to playerCount)
+        .iterator
+        .map(offset =>
+          game.players((currentIndex + offset) % playerCount)
+        )
+        .find(player => !player.folded && !player.allIn)
+        .map(_.id)
+        .getOrElse("")
+
+  private def firstToActLeftOfDealer(game: PokerGame): String =
+    val count = game.players.length
+    val dealerIndex =
+      game.players.indexWhere(_.id == game.dealerPlayerId)
+
+    if count == 0 || dealerIndex < 0 then ""
+    else
+      (1 to count)
+        .iterator
+        .map(offset => game.players((dealerIndex + offset) % count))
+        .find(p => !p.folded && !p.allIn)
+        .map(_.id)
+        .getOrElse("")
 
   private def advanceStreet(
                              game: PokerGame
@@ -599,9 +747,15 @@ object PokerGame:
             deck = remainingDeck,
             communityCards = flop,
             phase = PokerPhase.Flop,
-            currentPlayerId = game.dealerPlayerId,
+            currentPlayerId = firstToActLeftOfDealer(game),
             minimumRaise = game.bigBlind,
             actedPlayerIds = Set.empty,
+            lastActedBetByPlayer = Map.empty,
+            raiseAllowedPlayerIds =
+              resetPlayers
+                .filter(p => !p.folded && !p.allIn)
+                .map(_.id)
+                .toSet,
             lastAction = Some("The flop was dealt")
           )
         )
@@ -625,10 +779,16 @@ object PokerGame:
             communityCards =
               game.communityCards :+ turn,
             phase = PokerPhase.Turn,
-            currentPlayerId = game.dealerPlayerId,
+            currentPlayerId = firstToActLeftOfDealer(game),
             minimumRaise = game.bigBlind,
             actedPlayerIds = Set.empty,
-            lastAction = Some("The turn was dealt")
+            lastActedBetByPlayer = Map.empty,
+            lastAction = Some("The turn was dealt"),
+            raiseAllowedPlayerIds =
+              resetPlayers
+                .filter(p => !p.folded && !p.allIn)
+                .map(_.id)
+                .toSet
           )
         )
 
@@ -651,18 +811,23 @@ object PokerGame:
             communityCards =
               game.communityCards :+ river,
             phase = PokerPhase.River,
-            currentPlayerId = game.dealerPlayerId,
+            currentPlayerId = firstToActLeftOfDealer(game),
             minimumRaise = game.bigBlind,
             actedPlayerIds = Set.empty,
-            lastAction = Some("The river was dealt")
+            lastActedBetByPlayer = Map.empty,
+            lastAction = Some("The river was dealt"),
+            raiseAllowedPlayerIds =
+              resetPlayers
+                .filter(p => !p.folded && !p.allIn)
+                .map(_.id)
+                .toSet
           )
         )
 
       case PokerPhase.River =>
         resolveShowdown(
           game.copy(
-            lastAction =
-              Some("The hand reached showdown")
+            lastAction = Some("The hand reached showdown")
           )
         )
 
