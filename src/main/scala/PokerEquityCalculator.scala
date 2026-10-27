@@ -124,18 +124,6 @@ object PokerEquityCalculator:
     val totalRangeWeight =
       range.map(_.weight).sum
 
-    println(
-      "Top opponent range: " +
-        topHands
-          .map { hand =>
-            val percentage =
-              hand.weight / totalRangeWeight * 100.0
-
-            f"${hand.cards.mkString("(", ", ", ")")}=$percentage%.2f%%"
-          }
-          .mkString(", ")
-    )
-
     if range.isEmpty then
       return 0.0
 

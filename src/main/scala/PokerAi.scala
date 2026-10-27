@@ -44,19 +44,6 @@ object PokerAi:
           if game.phase == PokerPhase.PreFlop then 3000
           else 2500
       )
-    println("\n------------------------------ \n")
-    println(
-      s"AI range equity = $equity"
-    )
-    println("\n")
-    println(
-      s"AI action history = ${game.actionHistory}"
-    )
-    println("\n")
-    println(
-      s"AI last action = ${game.lastAction}"
-    )
-//    println("\n------------------------------ \n")
 
     if game.phase == PokerPhase.PreFlop then
 
@@ -345,17 +332,6 @@ object PokerAi:
         foldProbability = foldProbability,
         equityWhenCalled = equityWhenCalled
       )
-
-    println(f"Equity against overall range: $equity%.3f")
-
-    equityWhenCalled.foreach { value =>
-      println(f"Equity against calling range: $value%.3f")
-    }
-
-    println(
-      f"Decision engine: ${result.action}, EV=${result.ev}%.2f, " +
-        s"reason=${result.explanation}"
-    )
 
     result.action
   }

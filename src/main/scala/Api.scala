@@ -363,8 +363,6 @@ object Api extends cask.MainRoutes:
     val playerId: Option[String] =
       request.headers.get("x-player-id").flatMap(_.headOption)
 
-    println("---------------- player id ---------------- " + playerId)
-    println("---------------- request.headers ---------------- " + request.headers)
     playerId match
       case None =>
         errorResponse("Header 'X-Player-Id' is required", 400)
