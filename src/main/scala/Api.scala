@@ -4,7 +4,14 @@ import scala.util.Try
 object Api extends cask.MainRoutes:
 
   override def port: Int =
-    sys.props.get("poker.api.port").map(_.toInt).getOrElse(8080)
+    sys.env.get("PORT").flatMap(_.toIntOption)
+      .orElse(sys.props.get("poker.api.port").flatMap(_.toIntOption))
+      .getOrElse(8080)
+
+  override def host: String = "0.0.0.0"
+
+  private def allowedOrigin: String =
+    sys.env.getOrElse("FRONTEND_ORIGIN", "http://localhost:5173")
 
   private var currentGame: Option[PokerGame] = None
 
@@ -31,7 +38,7 @@ object Api extends cask.MainRoutes:
       headers = Seq(
         "Content-Type" -> "application/json",
         "Access-Control-Allow-Origin" ->
-          "http://localhost:5173"
+          allowedOrigin
       )
     )
 
@@ -45,7 +52,7 @@ object Api extends cask.MainRoutes:
       statusCode = status,
       headers = Seq(
         "Content-Type" -> "application/json",
-        "Access-Control-Allow-Origin" -> "http://localhost:5173"
+        "Access-Control-Allow-Origin" -> allowedOrigin
       )
     )
 
@@ -115,7 +122,7 @@ object Api extends cask.MainRoutes:
       "",
       statusCode = 204,
       headers = Seq(
-        "Access-Control-Allow-Origin" -> "http://localhost:5173",
+        "Access-Control-Allow-Origin" -> allowedOrigin,
         "Access-Control-Allow-Methods" -> "POST, OPTIONS",
         "Access-Control-Allow-Headers" -> "Content-Type"
       )
@@ -171,7 +178,7 @@ object Api extends cask.MainRoutes:
           headers = Seq(
             "Content-Type" -> "application/json",
             "Access-Control-Allow-Origin" ->
-              "http://localhost:5173"
+              allowedOrigin
           )
         )
 
@@ -192,7 +199,7 @@ object Api extends cask.MainRoutes:
           headers = Seq(
             "Content-Type" -> "application/json",
             "Access-Control-Allow-Origin" ->
-              "http://localhost:5173"
+              allowedOrigin
           )
         )
 
@@ -205,7 +212,7 @@ object Api extends cask.MainRoutes:
               statusCode = 400,
               headers = Seq(
                 "Content-Type" -> "application/json",
-                "Access-Control-Allow-Origin" -> "http://localhost:5173"
+                "Access-Control-Allow-Origin" -> allowedOrigin
               )
             )
 
@@ -217,7 +224,7 @@ object Api extends cask.MainRoutes:
                   statusCode = 400,
                   headers = Seq(
                     "Content-Type" -> "application/json",
-                    "Access-Control-Allow-Origin" -> "http://localhost:5173"
+                    "Access-Control-Allow-Origin" -> allowedOrigin
                   )
                 )
 
@@ -229,7 +236,7 @@ object Api extends cask.MainRoutes:
                       statusCode = 400,
                       headers = Seq(
                         "Content-Type" -> "application/json",
-                        "Access-Control-Allow-Origin" -> "http://localhost:5173"
+                        "Access-Control-Allow-Origin" -> allowedOrigin
                       )
                     )
 
@@ -243,7 +250,7 @@ object Api extends cask.MainRoutes:
       "",
       statusCode = 204,
       headers = Seq(
-        "Access-Control-Allow-Origin" -> "http://localhost:5173",
+        "Access-Control-Allow-Origin" -> allowedOrigin,
         "Access-Control-Allow-Methods" -> "POST, OPTIONS",
         "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
       )
@@ -295,7 +302,7 @@ object Api extends cask.MainRoutes:
   @cask.options("/api/rooms/:code/join")
   def joinRoomOptions(code: String): cask.Response[String] =
     cask.Response("", statusCode = 204, headers = Seq(
-      "Access-Control-Allow-Origin" -> "http://localhost:5173",
+      "Access-Control-Allow-Origin" -> allowedOrigin,
       "Access-Control-Allow-Methods" -> "POST, OPTIONS",
       "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
     ))
@@ -341,7 +348,7 @@ object Api extends cask.MainRoutes:
   @cask.options("/api/rooms/:code")
   def getOnlineRoomOptions(code: String): cask.Response[String] =
     cask.Response("", statusCode = 204, headers = Seq(
-      "Access-Control-Allow-Origin" -> "http://localhost:5173",
+      "Access-Control-Allow-Origin" -> allowedOrigin,
       "Access-Control-Allow-Methods" -> "GET, OPTIONS",
       "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
     ))
@@ -377,7 +384,7 @@ object Api extends cask.MainRoutes:
   @cask.options("/api/rooms/:code/start")
   def startOnlineRoomOptions(code: String): cask.Response[String] =
     cask.Response("", statusCode = 204, headers = Seq(
-      "Access-Control-Allow-Origin" -> "http://localhost:5173",
+      "Access-Control-Allow-Origin" -> allowedOrigin,
       "Access-Control-Allow-Methods" -> "POST, OPTIONS",
       "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
     ))
@@ -403,7 +410,7 @@ object Api extends cask.MainRoutes:
   @cask.options("/api/rooms/:code/action")
   def onlineActionOptions(code: String): cask.Response[String] =
     cask.Response("", statusCode = 204, headers = Seq(
-      "Access-Control-Allow-Origin" -> "http://localhost:5173",
+      "Access-Control-Allow-Origin" -> allowedOrigin,
       "Access-Control-Allow-Methods" -> "POST, OPTIONS",
       "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
     ))
@@ -467,7 +474,7 @@ object Api extends cask.MainRoutes:
   @cask.options("/api/rooms/:code/reveal")
   def revealCardsOptions(code: String): cask.Response[String] =
     cask.Response("", statusCode = 204, headers = Seq(
-      "Access-Control-Allow-Origin" -> "http://localhost:5173",
+      "Access-Control-Allow-Origin" -> allowedOrigin,
       "Access-Control-Allow-Methods" -> "POST, OPTIONS",
       "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
     ))
@@ -506,7 +513,7 @@ object Api extends cask.MainRoutes:
   @cask.options("/api/rooms/:code/restart")
   def voteToRestartOptions(code: String): cask.Response[String] =
     cask.Response("", statusCode = 204, headers = Seq(
-      "Access-Control-Allow-Origin" -> "http://localhost:5173",
+      "Access-Control-Allow-Origin" -> allowedOrigin,
       "Access-Control-Allow-Methods" -> "POST, OPTIONS",
       "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
     ))
