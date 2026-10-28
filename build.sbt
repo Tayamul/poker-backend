@@ -6,5 +6,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "com.lihaoyi" %% "cask" % "0.9.5",
       "org.scalameta" %% "munit" % "1.0.2" % Test
-    )
+    ),
+    Compile / mainClass := Some("Api"),
+    assembly / mainClass := Some("Api")
   )
