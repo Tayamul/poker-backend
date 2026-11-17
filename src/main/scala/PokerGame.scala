@@ -483,6 +483,41 @@ object PokerGame:
           finishAction(updatedGame)
 
 
+  def foldPlayer(
+                  game: PokerGame,
+                  playerId: String
+                ): Either[String, PokerGame] =
+
+    if game.phase == PokerPhase.Showdown ||
+      game.phase == PokerPhase.Complete then
+      Right(game)
+    else
+      game.players.find(_.id == playerId) match
+        case None =>
+          Left("Player not found")
+
+        case Some(player) if player.folded =>
+          Right(game)
+
+        case Some(player) =>
+          val updatedGame = game.copy(
+            players = game.players.map { p =>
+              if p.id == playerId then p.copy(folded = true)
+              else p
+            },
+            actedPlayerIds = game.actedPlayerIds - playerId,
+            raiseAllowedPlayerIds = game.raiseAllowedPlayerIds - playerId,
+            lastAction = Some(s"${player.name} left the game and folded")
+          )
+
+          val remainingPlayers =
+            updatedGame.players.filterNot(_.folded)
+
+          if remainingPlayers.size <= 1 ||
+            game.currentPlayerId == playerId then
+            finishAction(updatedGame)
+          else
+            Right(updatedGame)
 
   private def fold(
                     game: PokerGame,

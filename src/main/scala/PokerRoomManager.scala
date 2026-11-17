@@ -22,7 +22,8 @@ case class PokerRoom(
                       sessionWinnerPlayerId: Option[String] = None,
                       handNumber: Int = 0,
                       eliminatedPlayerIds: Set[String] = Set.empty,
-                      restartVotes: Set[String] = Set.empty
+                      restartVotes: Set[String] = Set.empty,
+                      leftPlayerIds: Set[String] = Set.empty
                     )
 
 
@@ -105,16 +106,25 @@ object PokerRoomManager:
                                   room: PokerRoom,
                                   game: PokerGame
                                 ): PokerRoom =
-    val playersWithChips = game.players.filter(_.chips > 0)
-    val playersWithChipsIds = playersWithChips.map(_.id).toSet
+    val playersWithChips =
+      game.players.filter { player =>
+        player.chips > 0 &&
+          !room.leftPlayerIds.contains(player.id)
+      }
+
+    val playersWithChipsIds =
+      playersWithChips.map(_.id).toSet
 
     room.copy(
       sessionOver = playersWithChips.size <= 1,
       sessionWinnerPlayerId =
-        if playersWithChips.size == 1 then Some(playersWithChips.head.id)
-        else None,
+        if playersWithChips.size == 1 then
+          Some(playersWithChips.head.id)
+        else
+          None,
       eliminatedPlayerIds =
-        room.players.map(_.id).toSet -- playersWithChipsIds
+        room.players.map(_.id).toSet --
+          (playersWithChipsIds ++ room.leftPlayerIds)
     )
 
   private def scheduleNextHand(room: PokerRoom): Unit =
@@ -144,7 +154,10 @@ object PokerRoomManager:
         room.game.exists(isGameOver)
       then
         val currentGame = room.game.get
-        val activePlayers = currentGame.players.filter(_.chips > 0)
+        val activePlayers = currentGame.players.filter { player =>
+          player.chips > 0 &&
+            !room.leftPlayerIds.contains(player.id)
+        }
 
         if activePlayers.size <= 1 then
           val updatedRoom = withSessionOutcome(room, currentGame)
@@ -385,6 +398,69 @@ object PokerRoomManager:
 
     }
 
+  def leaveRoom(
+                 code: String,
+                 playerId: String,
+                 playerToken: String
+               ): Either[String, PokerRoom] =
+    synchronized {
+      rooms.get(Option(code).getOrElse("").trim) match
+        case None =>
+          Left("Room not found.")
+
+        case Some(room)
+          if !room.players.exists(p =>
+            p.id == playerId && p.token == playerToken
+          ) =>
+          Left("Invalid player session.")
+
+        case Some(room) if room.leftPlayerIds.contains(playerId) =>
+          Right(room)
+
+        case Some(room) =>
+          val roomWithDeparture = room.copy(
+            leftPlayerIds = room.leftPlayerIds + playerId
+          )
+
+          val updatedRoom =
+            roomWithDeparture.game match
+              case None =>
+                roomWithDeparture
+
+              case Some(game) if isGameOver(game) =>
+                roomWithDeparture
+
+              case Some(game) =>
+                PokerGame.foldPlayer(game, playerId) match
+                  case Left(error) =>
+                    return Left(error)
+
+                  case Right(updatedGame) =>
+                    val roomWithGame = roomWithDeparture.copy(
+                      game = Some(updatedGame)
+                    )
+
+                    val activePlayers =
+                      updatedGame.players.filter { player =>
+                        player.chips > 0 &&
+                          !roomWithDeparture.leftPlayerIds.contains(player.id)
+                      }
+
+                    if activePlayers.size <= 1 then
+                      roomWithGame.copy(
+                        sessionOver = true,
+                        sessionWinnerPlayerId =
+                          activePlayers.headOption.map(_.id),
+                        revealDeadlineEpochMillis = None,
+                        eliminatedPlayerIds =
+                          room.players.map(_.id).toSet -- activePlayers.map(_.id).toSet
+                      )
+                    else
+                      roomWithGame
+
+          rooms(room.code) = updatedRoom
+          Right(updatedRoom)
+    }
 
   def revealCards(
                    code: String,
@@ -426,7 +502,9 @@ object PokerRoomManager:
     }
 
   private def restartSession(room: PokerRoom): PokerRoom =
-    val configs = room.players.map { player =>
+    val configs = room.players.filterNot { player =>
+      room.leftPlayerIds.contains(player.id)
+    }.map { player =>
       PokerPlayerConfig(
         id = player.id,
         name = player.name,
@@ -473,9 +551,17 @@ object PokerRoomManager:
       case Some(room) if !room.sessionOver =>
         Left("The session has not ended yet.")
 
+      case Some(room) if room.leftPlayerIds.contains(playerId) =>
+        Left("Players who left the game cannot vote to restart.")
+
+      case Some(room)
+        if room.players.count(p => !room.leftPlayerIds.contains(p.id)) < MinPlayers =>
+        Left("At least two active players are needed to restart.")
+
       case Some(room) =>
         val updatedVotes = room.restartVotes + playerId
-        val allPlayerIds = room.players.map(_.id).toSet
+        val allPlayerIds =
+          room.players.map(_.id).toSet -- room.leftPlayerIds
 
         if allPlayerIds.subsetOf(updatedVotes) then
           val restartedRoom = restartSession(room)

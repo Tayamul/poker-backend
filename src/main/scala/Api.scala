@@ -111,7 +111,8 @@ object Api extends cask.MainRoutes:
           ),
         "restartVotes" -> ujson.Arr.from(
           room.restartVotes.toSeq.sorted.map(ujson.Str(_))
-        )
+        ),
+        "leftPlayerIds" -> room.leftPlayerIds.toList
       )
     )
 
@@ -449,6 +450,38 @@ object Api extends cask.MainRoutes:
       case Right(_) =>
         errorResponse("Request body must be a JSON object", 400)
 
+  @cask.options("/api/rooms/:code/leave")
+  def leaveRoomOptions(code: String): cask.Response[String] =
+    cask.Response(
+      "",
+      statusCode = 204,
+      headers = Seq(
+        "Access-Control-Allow-Origin" -> allowedOrigin,
+        "Access-Control-Allow-Methods" -> "POST, OPTIONS",
+        "Access-Control-Allow-Headers" -> "Content-Type, X-Player-Id"
+      )
+    )
+
+  @cask.post("/api/rooms/:code/leave")
+  def leaveOnlineRoom(
+                       code: String,
+                       request: cask.Request
+                     ): cask.Response[String] =
+    parseRoomCredentials(request) match
+      case Left(error) =>
+        errorResponse(error, 400)
+
+      case Right((playerId, playerToken)) =>
+        PokerRoomManager.leaveRoom(
+          code,
+          playerId,
+          playerToken
+        ) match
+          case Left(error) =>
+            errorResponse(error, 400)
+
+          case Right(room) =>
+            jsonResponse(onlineRoomJson(room, playerId))
 
   private def parseRoomCredentials(
                                     request: cask.Request
